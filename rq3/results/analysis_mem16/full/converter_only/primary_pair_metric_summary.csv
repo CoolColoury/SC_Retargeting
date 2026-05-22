@@ -1,0 +1,12 @@
+metric,tier,raw_spearman,oriented_spearman,n
+target_readability_cross_entropy,L1_pair_compatibility,-0.45166029973552746,0.45166029973552746,83
+source_to_target_anchor_kl,L1_pair_compatibility,-0.3812182528021494,0.3812182528021494,83
+pair_normalized_direction_rmse,L1_pair_compatibility,-0.3606481675832249,0.3606481675832249,83
+pair_geometry_compatibility_score,L1_pair_compatibility,0.30120481927710846,0.30120481927710846,83
+target_readability_tail_frac,L1_pair_compatibility,-0.2013467330588683,0.2013467330588683,83
+target_magnitude_tail_frac,L1_pair_compatibility,-0.18265318059361074,0.18265318059361074,83
+target_readability_energy,L1_pair_compatibility,0.15459048738508038,0.15459048738508038,83
+source_target_direction_dispersion_gap,L1_pair_compatibility,-0.15358297300701063,0.15358297300701063,83
+target_readability_z2_mean,L1_pair_compatibility,-0.1493849964317199,0.1493849964317199,83
+source_target_direction_entropy_gap,L1_pair_compatibility,-0.12046093782796692,0.12046093782796692,83
+source_target_top_anchor_overlap,L1_pair_compatibility,0.0033373913773561146,0.0033373913773561146,83
