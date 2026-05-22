@@ -6,7 +6,7 @@ Bundle for **RQ1–RQ3** analysis (CSVs + scripts), plus the **training / transf
 
 | Area | Path | Contents |
 |------|------|----------|
-| **RQ1** | `rq1/data/` | Shift-aligned BLEU CSVs (origin, ori-transfer, LS, random) |
+| **RQ1** | `rq1/data/` | BLEU CSVs (origin, ori-transfer, LS, random) |
 | **RQ2** | `rq2/` | Perturbation + native/pair geometry code; `results/` CSVs |
 | **RQ3** | `rq3/` | Pre-transfer prior code; `results/` (scores, priors, analysis CSVs) |
 | **Core library** | `src/soft_compress/` | Compressor, converters, ori-transfer training/eval |
@@ -41,7 +41,7 @@ LS vocab: `scripts/soft_compress/simple_compressor/data/vocab_100k.txt`.
 
 ## RQ1
 
-Bundled CSVs under `rq1/data/` — deduplicated, shift-aligned metrics for paper tables.
+Bundled CSVs under `rq1/data/` — deduplicated BLEU metrics for paper tables.
 
 ## RQ2
 
@@ -62,13 +62,3 @@ Bundled: `rq3/results/standard_scores/`, `priors/`, `analysis_mem*/**/*.csv`.
 ## Anonymity
 
 Paths use `${PROJECT_ROOT}`, `${MODELS_DIR}`, `${DATA_ROOT}`. Do not commit credentials or machine-specific absolute paths.
-
-## Regenerate this tree
-
-From the main repo (keeps `rq1/`–`rq3/` and restores pruned `src/` + `scripts/`):
-
-```bash
-python3 tools/rebuild_minimal_code_backup.py --with-pipeline
-```
-
-(or rsync + `bash tools/prune_code_backup_paper.sh code_backup` + `python3 tools/sanitize_code_backup.py code_backup`)

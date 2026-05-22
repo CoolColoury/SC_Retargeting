@@ -395,7 +395,7 @@ def recover_eval(
 
     recovered_summary = dict(summary)
     recovered_summary["recovered_metric_source"] = (
-        "saved_generated_text_vs_shift_aligned_reference"
+        "saved_generated_text_vs_reference"
         if metric_mode == "shift_aligned"
         else "saved_generated_text_vs_saved_cropped_reference"
     )
