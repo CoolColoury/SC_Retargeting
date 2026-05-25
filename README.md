@@ -9,7 +9,7 @@ Bundle for **RQ1–RQ3** analysis (CSVs + scripts), plus the **training / transf
 | **RQ1** | `rq1/data/` | BLEU CSVs (origin, ori-transfer, LS, random) |
 | **RQ2** | `rq2/` | Perturbation + native/pair geometry code; `results/` CSVs |
 | **RQ3** | `rq3/` | Pre-transfer prior code; `results/` (scores, priors, analysis CSVs) |
-| **Core library** | `src/soft_compress/` | Compressor, converters, ori-transfer training/eval |
+| **Core library** | `src/soft_compress/` | Compressor, converters (LS/BP/Procrustes), ori-transfer |
 | **Launchers** | `scripts/soft_compress/simple_compressor/` | Train, evaluate, LS/random transfer, `recover_bleu` |
 | **Sample data** | `datasets/simple_mem/` | Tiny JSON sample + `process_data.py` |
 
@@ -41,7 +41,7 @@ LS vocab: `scripts/soft_compress/simple_compressor/data/vocab_100k.txt`.
 
 ## RQ1
 
-Bundled CSVs under `rq1/data/` — deduplicated BLEU metrics for paper tables.
+Bundled CSVs under `rq1/data/` — deduplicated BLEU metrics for paper tables (`metric_source=saved_generated_text_vs_reference`).
 
 ## RQ2
 
@@ -54,10 +54,13 @@ Precomputed: `rq2/results/perturbation/`, `native_geometry/`, `pair_geometry/`, 
 
 ## RQ3
 
-- **Compute priors** (GPU): `python rq3/compute_pretransfer_priors.py` + checkpoint / model paths
-- **Evaluate** (CPU): `python rq3/rq3_evaluate_priors.py --mem-tokens 32 --label enc_conv --suite full --prior-csv rq3/results/priors/priors_consolidated_mem32.csv`
+Canonical outputs: `rq3/results/analysis_mem{8,16,32}/full/{enc_conv,converter_only}/` (full target pool).  
+Primary priors: `rq3/results/priors/priors_consolidated_mem*_with_pair_metrics.csv`.
 
-Bundled: `rq3/results/standard_scores/`, `priors/`, `analysis_mem*/**/*.csv`.
+- **Compute priors** (GPU): `python rq3/compute_pretransfer_priors.py` + checkpoint / model paths
+- **Evaluate** (CPU): `python rq3/rq3_evaluate_priors.py --mem-tokens 32 --label enc_conv --suite full --prior-csv rq3/results/priors/priors_consolidated_mem32_with_pair_metrics.csv`
+
+Bundled: `rq3/results/standard_scores/`, `priors/`, `analysis_mem*/**/*.csv`, controlled robustness CSVs at `rq3/results/rq3_controlled_*.csv`.
 
 ## Anonymity
 

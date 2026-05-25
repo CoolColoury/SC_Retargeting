@@ -2,13 +2,15 @@
 Transfer compression from source model to target model using original dataset.
 
 This module supports multiple transfer methods:
-- ls/bp/mlp_ust/random: Use pre-existing converter (from converter module)
+- ls/procrustes/bp/mlp_ust/random: Use pre-existing converter (from converter module)
 - mlp_st: Train a projector with supervised learning  
 - e2e: Train a projector end-to-end with reconstruction loss
 """
 
 import argparse
 import json
+import os
+import shutil
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -28,6 +30,73 @@ sys.path.append(str(Path(__file__).parent))
 
 from simple_compressor import SimpleCompressor
 from converter_factory import ConverterFactory
+
+
+def _format_bytes(num_bytes: int) -> str:
+    units = ["B", "KB", "MB", "GB", "TB"]
+    size = float(num_bytes)
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            return f"{size:.1f}{unit}"
+        size /= 1024
+    return f"{num_bytes}B"
+
+
+def _check_disk_space(path: Path, required_bytes: int) -> None:
+    usage = shutil.disk_usage(path)
+    if usage.free >= required_bytes:
+        return
+    raise OSError(
+        f"Insufficient disk space for writing under {path}: "
+        f"free={_format_bytes(usage.free)}, need≈{_format_bytes(required_bytes)} "
+        f"(partition total={_format_bytes(usage.total)}, used={_format_bytes(usage.used)}). "
+        "If another mount still shows free space, outputs may be on a full quota/inode-limited "
+        "filesystem — check with: df -h . && df -i ."
+    )
+
+
+def save_transfer_results_json(
+    output_path: Path,
+    output_data: dict,
+    *,
+    compact_json: bool = True,
+    store_memories_npz: bool = True,
+) -> None:
+    """Write transfer JSON; optionally store memory tensors in a sidecar .npz to save disk."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = output_data
+    estimated_bytes = 32_000_000
+
+    if store_memories_npz and payload.get("results"):
+        results = payload["results"]
+        if results and isinstance(results[0], dict) and "memory" in results[0]:
+            memories = np.stack([np.asarray(row["memory"], dtype=np.float32) for row in results])
+            text_ids = [row["text_id"] for row in results]
+            npz_path = output_path.with_suffix(".memories.npz")
+            np.savez_compressed(npz_path, memories=memories, text_ids=np.asarray(text_ids, dtype=object))
+            payload = {
+                "metadata": dict(payload.get("metadata", {})),
+                "results": [{"text_id": tid} for tid in text_ids],
+            }
+            payload["metadata"]["memories_npz"] = npz_path.name
+            estimated_bytes = npz_path.stat().st_size + len(results) * 128
+
+    _check_disk_space(output_path.parent, max(estimated_bytes * 2, 64_000_000))
+
+    tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+    try:
+        with tmp_path.open("w", encoding="utf-8") as f:
+            if compact_json or store_memories_npz:
+                json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+            else:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
+        tmp_path.replace(output_path)
+    except OSError:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
 from ls_converter import LeastSquaresConverter
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from projector_mlp import create_projector_mlp
@@ -177,7 +246,7 @@ def transfer_compressed_memories(
     converter_kwargs: dict = None,
     converter_path: str = None,
     transfer_batch_size: int = 256,
-) -> List[Dict]:
+) -> tuple[List[Dict], dict]:
     """
     Transfer compressed memories from source dimension to target dimension.
     
@@ -218,6 +287,8 @@ def transfer_compressed_memories(
         converter_type=converter_type,
         **kwargs
     )
+    if hasattr(converter, "reset_timing_stats"):
+        converter.reset_timing_stats()
     
     # Transfer memories in batches for better throughput
     transferred_results = []
@@ -248,8 +319,12 @@ def transfer_compressed_memories(
                 'memory': converted_memory_np.tolist(),
                 'original_text': result.get('original_text', ''),
             })
-    
-    return transferred_results
+
+    extra_metadata: dict = {}
+    if hasattr(converter, "get_timing_stats"):
+        extra_metadata.update(converter.get_timing_stats())
+
+    return transferred_results, extra_metadata
 
 
 def train_projector_mlp_st(
@@ -723,6 +798,8 @@ def transfer_compressor(
     device: str = 'cuda',
     batch_size: int = 32,
     transfer_batch_size: int = 256,
+    compact_json: bool = True,
+    store_memories_npz: bool = True,
 ) -> dict:
     """
     Main transfer pipeline: dataset -> source compression -> converter -> target format.
@@ -851,10 +928,11 @@ def transfer_compressor(
                     'memory': converted_memory_np.tolist(),
                     'original_text': result.get('original_text', ''),
                 })
+        transfer_extra = {}
     else:
         # Use existing converter methods (ls, bp, mlp_ust, random, etc.)
         print(f"  Using converter method: {converter_type}")
-        transferred_results = transfer_compressed_memories(
+        transferred_results, transfer_extra = transfer_compressed_memories(
             compressed_results=compressed_results,
             src_model_path=src_model_path,
             tgt_model_path=tgt_model_path,
@@ -906,6 +984,7 @@ def transfer_compressor(
             'max_length': max_length,
             'num_texts': len(transferred_results),
             'transfer_method': converter_type,
+            **transfer_extra,
         },
         'results': transferred_results
     }
@@ -916,9 +995,13 @@ def transfer_compressor(
     
     output_filename = f"compression_results_from_{src_exp_name}_using_{converter_type}.json"
     output_path = output_dir / output_filename
-    
-    with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(output_data, f, indent=2, ensure_ascii=False)
+
+    save_transfer_results_json(
+        output_path,
+        output_data,
+        compact_json=compact_json,
+        store_memories_npz=store_memories_npz,
+    )
     
     print(f"\nTransferred results saved to: {output_path}")
     
@@ -946,8 +1029,8 @@ def main():
     parser.add_argument('--num_samples', type=int, default=None,
                        help='Limit number of samples (None = all)')
     parser.add_argument('--converter_type', type=str, default='ls',
-                       choices=['ls', 'bp', 'mlp_ust', 'random', 'mlp_st', 'e2e', 'ls_e2e'],
-                       help='Transfer method: ls/bp/mlp_ust/random (use converter), mlp_st (supervised train), e2e (end-to-end train), ls_e2e (LS init + short e2e)')
+                       choices=['ls', 'procrustes', 'bp', 'mlp_ust', 'random', 'mlp_st', 'e2e', 'ls_e2e'],
+                       help='Transfer method: ls/procrustes/bp/mlp_ust/random (use converter), mlp_st (supervised train), e2e (end-to-end train), ls_e2e (LS init + short e2e)')
     parser.add_argument('--common_vocab', type=str, default=None,
                        help='Path to common vocabulary file (required for mlp_st)')
     parser.add_argument('--converter_kwargs', type=str, default='{}',
@@ -960,6 +1043,10 @@ def main():
                        help='Batch size for compression (default: 32)')
     parser.add_argument('--transfer_batch_size', type=int, default=256,
                        help='Batch size for transfer conversion (default: 256)')
+    parser.add_argument('--compact_json', action=argparse.BooleanOptionalAction, default=True,
+                       help='Write compact JSON (default: true).')
+    parser.add_argument('--store_memories_npz', action=argparse.BooleanOptionalAction, default=True,
+                       help='Store memory tensors in .memories.npz sidecar (default: true, saves disk).')
     
     args = parser.parse_args()
     converter_kwargs = json.loads(args.converter_kwargs)
@@ -1001,6 +1088,8 @@ def main():
         device=args.device,
         batch_size=args.batch_size,
         transfer_batch_size=args.transfer_batch_size,
+        compact_json=args.compact_json,
+        store_memories_npz=args.store_memories_npz,
     )
     
     print("\n" + "=" * 60)

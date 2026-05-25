@@ -5,6 +5,7 @@ Uses the same evaluation logic as SimpleCompressor (test_simple_compressor.py).
 
 import argparse
 import json
+import sys
 import torch
 import numpy as np
 from pathlib import Path
@@ -12,18 +13,30 @@ from typing import Dict, List
 from tqdm import tqdm
 from transformers.utils import logging as hf_logging
 
-from ori_transfer_compressor_model import OriTransferCompressor
-from decoder_prefix_tokens import decoder_bos_token_id, decoder_eos_token_id
+_SRC_ROOT = Path(__file__).resolve().parents[2]
+if str(_SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SRC_ROOT))
 
-# BLEU and ROUGE imports
 try:
-    from nltk.translate.bleu_score import sentence_bleu
-    from nltk.tokenize import wordpunct_tokenize
-    from rouge_score import rouge_scorer
+    from soft_compress.evaluation.text_generation_scores import cal_bleu_rouge
+
     HAS_BLEU_ROUGE = True
 except ImportError:
     print("Warning: nltk or rouge-score not installed. BLEU/ROUGE metrics will be skipped.")
     HAS_BLEU_ROUGE = False
+
+    def cal_bleu_rouge(pred: str, ref: str) -> Dict:
+        return {
+            "bleu": 0.0,
+            "bleu1": 0.0,
+            "bleu2": 0.0,
+            "bleu3": 0.0,
+            "bleu4": 0.0,
+            "rougeL": 0.0,
+        }
+
+from ori_transfer_compressor_model import OriTransferCompressor
+from decoder_prefix_tokens import decoder_bos_token_id, decoder_eos_token_id
 
 
 def load_test_dataset(dataset_path: str, max_samples: int = None) -> List[Dict]:
@@ -279,36 +292,6 @@ def generate_reconstructed_text(
         else:
             gen = seq
         return gen
-
-
-def cal_bleu_rouge(pred: str, ref: str) -> Dict:
-    """Calculate BLEU and ROUGE scores"""
-    if not HAS_BLEU_ROUGE:
-        return {
-            'bleu': 0.0, 'bleu1': 0.0, 'bleu2': 0.0,
-            'bleu3': 0.0, 'bleu4': 0.0, 'rougeL': 0.0
-        }
-    
-    try:
-        pred_tokens = wordpunct_tokenize(pred)
-        ref_tokens = wordpunct_tokenize(ref)
-    except:
-        pred_tokens = pred.lower().split()
-        ref_tokens = ref.lower().split()
-    
-    bleu = sentence_bleu([ref_tokens], pred_tokens, weights=(0.25, 0.25, 0.25, 0.25))
-    bleu1 = sentence_bleu([ref_tokens], pred_tokens, weights=(1, 0, 0, 0))
-    bleu2 = sentence_bleu([ref_tokens], pred_tokens, weights=(0, 1, 0, 0))
-    bleu3 = sentence_bleu([ref_tokens], pred_tokens, weights=(0, 0, 1, 0))
-    bleu4 = sentence_bleu([ref_tokens], pred_tokens, weights=(0, 0, 0, 1))
-    
-    scorer = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
-    rougeL = scorer.score(pred, ref)['rougeL'].fmeasure
-    
-    return {
-        'bleu': bleu, 'bleu1': bleu1, 'bleu2': bleu2,
-        'bleu3': bleu3, 'bleu4': bleu4, 'rougeL': rougeL
-    }
 
 
 def compute_text_similarity_metrics(original_text: str, generated_text: str) -> Dict:

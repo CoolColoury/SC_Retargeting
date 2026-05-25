@@ -9,6 +9,7 @@ import math
 from pathlib import Path
 
 _METRIC_DIR = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 import sys
 
 sys.path.insert(0, str(_METRIC_DIR))

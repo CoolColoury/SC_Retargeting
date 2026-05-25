@@ -14,8 +14,8 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]  # code_backup root
-RESULTS_DIR = ROOT / "experiments" / "soft_compress" / "metric_test" / "results"
-PRIORS_DIR = ROOT / "experiments" / "soft_compress" / "metric_test" / "results" / "priors"
+RESULTS_DIR = ROOT / "rq3" / "results"
+PRIORS_DIR = ROOT / "rq3" / "results" / "priors"
 
 LOWER_IS_BETTER = {
     "pair_normalized_direction_rmse",

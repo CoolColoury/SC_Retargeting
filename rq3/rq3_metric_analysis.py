@@ -26,7 +26,7 @@ from rq3_checkpoint_parse import (  # noqa: E402
 )
 
 ROOT = Path(__file__).resolve().parents[1]  # code_backup root
-DEFAULT_EVAL_DIR = ROOT / "rq1" / "data"
+DEFAULT_EVAL_DIR = ROOT / "eval_output_temp" / "recovered_bleu_shift_aligned"
 DEFAULT_ORIGIN_EVAL_CSV = "origin_recovered_evals.csv"
 DEFAULT_ORI_TRANSFER_EVAL_CSV = "ori_transfer_recovered_evals.csv"
 NEW_EVAL_DIR = ROOT / "rq1" / "data"
@@ -998,7 +998,7 @@ def main() -> None:
         "--eval-dir",
         type=Path,
         default=None,
-        help="Directory with origin/ori_transfer eval CSVs (default: rq1/data).",
+        help="Directory with origin/ori_transfer eval CSVs (default: eval_output_temp/recovered_bleu_shift_aligned).",
     )
     parser.add_argument(
         "--origin-csv",

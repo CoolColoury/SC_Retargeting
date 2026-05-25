@@ -2,10 +2,19 @@
 """Recover text metrics from saved evaluation_results.json files.
 
 This script does not load checkpoints or regenerate text. It recomputes BLEU
-and ROUGE-L from the already saved `generated_text`. In `saved_cropped` mode it
-uses the saved cropped reference text. In `shift_aligned` mode it tries to align
-the reference window to the saved generated text after the known prefix
-over-trimming bug (`n_mem_tokens + 1` tokens).
+and ROUGE-L from the already saved ``generated_text``.
+
+- ``saved_cropped``: compare to the saved cropped reference string on each row.
+- ``shift_aligned``: legacy diagnostic that window-aligns the full reference when
+  token-count heuristics suggest prefix cropping (used only for historical CSVs).
+- ``paper``: same reference policy as ``tools/recalculate_eval_bleu.py`` (prefer the
+  full stored segment ``text``, else ``original_text_truncated``), and the same
+  smoothed sentence BLEU / ROUGE-L implementation as training and evaluation
+  (``soft_compress.evaluation.text_generation_scores.cal_bleu_rouge``).
+
+With ``--metric_mode paper --reuse_json_summary``, skip per-sample recomputation and
+copy ``summary.*`` from each JSON (use after ``tools/recalculate_eval_bleu.py`` has
+been run on the same trees) for fast CSV/table export only.
 """
 
 from __future__ import annotations
@@ -16,10 +25,20 @@ import difflib
 import json
 import math
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 from statistics import mean
 from typing import Any
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_SRC_ROOT = _REPO_ROOT / "src"
+if str(_SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SRC_ROOT))
+try:
+    from soft_compress.evaluation.text_generation_scores import cal_bleu_rouge as _cal_bleu_rouge_paper
+except ImportError:  # pragma: no cover
+    _cal_bleu_rouge_paper = None
 
 
 TOKEN_RE = re.compile(r"\w+|[^\w\s]", re.UNICODE)
@@ -160,6 +179,17 @@ def saved_reference(result: dict[str, Any]) -> str:
         or result.get("original_text")
         or ""
     )
+
+
+def paper_eval_reference(result: dict[str, Any], dataset_index: dict[str, str] | None) -> str:
+    """Reference string for published BLEU (matches ``recalculate_eval_bleu``)."""
+    t = result.get("text")
+    if isinstance(t, str) and t.strip():
+        return t
+    ot = result.get("original_text_truncated")
+    if isinstance(ot, str) and ot.strip():
+        return ot
+    return full_reference(result, dataset_index)
 
 
 def full_reference(result: dict[str, Any], dataset_index: dict[str, str] | None = None) -> str:
@@ -331,6 +361,9 @@ def metric_reference_text(
     tokenizer_cache: dict[str, Any],
     dataset_index: dict[str, str] | None,
 ) -> tuple[str, str, int | None]:
+    if metric_mode == "paper":
+        return paper_eval_reference(result, dataset_index), "paper_eval_reference", None
+
     if metric_mode == "saved_cropped":
         return saved_reference(result), "saved_cropped", None
 
@@ -358,8 +391,26 @@ def recover_eval(
     max_recovered_texts: int | None,
     metric_mode: str,
     tokenizer_cache: dict[str, Any],
+    reuse_json_summary: bool = False,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     summary, results, raw_data = load_eval(eval_file)
+    if reuse_json_summary and metric_mode == "paper":
+        # Fast path: trust summary.* already written by tools/recalculate_eval_bleu.py
+        # (same reference policy + cal_bleu_rouge). Skips O(n_samples) per-file recomputation.
+        recovered_summary = dict(summary)
+        if not recovered_summary.get("recovered_metric_source"):
+            recovered_summary["recovered_metric_source"] = "paper_json_summary_passthrough"
+        n_results = sum(1 for r in results if isinstance(r, dict))
+        recovered_summary["num_recovered_texts"] = int(
+            summary.get("num_recovered_texts")
+            or summary.get("num_samples")
+            or n_results
+        )
+        recovered_data = dict(raw_data)
+        recovered_data["summary"] = recovered_summary
+        recovered_data["results"] = results
+        return recovered_summary, list(results), recovered_data
+
     recovered_results: list[dict[str, Any]] = []
     metric_rows: list[dict[str, float | bool | int]] = []
     max_texts = None if max_recovered_texts is None or max_recovered_texts <= 0 else int(max_recovered_texts)
@@ -380,7 +431,18 @@ def recover_eval(
         recovered = dict(result)
 
         if generated and reference and (max_texts is None or len(metric_rows) < max_texts):
-            metrics = text_metrics(reference, generated)
+            if metric_mode == "paper":
+                if _cal_bleu_rouge_paper is None:
+                    raise ImportError(
+                        "paper metric_mode requires nltk and rouge-score in this interpreter "
+                        "(soft_compress.evaluation.text_generation_scores)."
+                    )
+                m = _cal_bleu_rouge_paper(generated, reference)
+                metrics = text_metrics(reference, generated)
+                for k in ("bleu", "bleu1", "bleu2", "bleu3", "bleu4", "rougeL"):
+                    metrics[k] = float(m[k])
+            else:
+                metrics = text_metrics(reference, generated)
             recovered.update(metrics)
             recovered["metric_reference"] = reference_kind
             recovered["alignment_shift_tokens"] = shift
@@ -394,11 +456,13 @@ def recover_eval(
         recovered_results.append(recovered)
 
     recovered_summary = dict(summary)
-    recovered_summary["recovered_metric_source"] = (
-        "saved_generated_text_vs_reference"
-        if metric_mode == "shift_aligned"
-        else "saved_generated_text_vs_saved_cropped_reference"
-    )
+    if metric_mode == "paper":
+        recovered_source = "saved_generated_text_vs_paper_eval_reference_smoothed_bleu"
+    elif metric_mode == "shift_aligned":
+        recovered_source = "saved_generated_text_vs_shift_aligned_reference"
+    else:
+        recovered_source = "saved_generated_text_vs_saved_cropped_reference"
+    recovered_summary["recovered_metric_source"] = recovered_source
     recovered_summary["num_recovered_texts"] = len(metric_rows)
     if metric_rows:
         for key in [
@@ -510,6 +574,7 @@ def recover_origin(
     max_recovered_texts: int,
     metric_mode: str,
     tokenizer_cache: dict[str, Any],
+    reuse_json_summary: bool,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for eval_file in origin_eval_files(origin_base):
@@ -519,6 +584,7 @@ def recover_origin(
                 max_recovered_texts=max_recovered_texts,
                 metric_mode=metric_mode,
                 tokenizer_cache=tokenizer_cache,
+                reuse_json_summary=reuse_json_summary,
             )
         except Exception as exc:
             print(f"[WARN] skip origin {eval_file}: {exc}")
@@ -587,6 +653,7 @@ def recover_ori_transfer(
     max_recovered_texts: int,
     metric_mode: str,
     tokenizer_cache: dict[str, Any],
+    reuse_json_summary: bool,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     # Multiple timestamped dirs can share the same logical (enc, src, tgt, mode, mem).
@@ -615,6 +682,7 @@ def recover_ori_transfer(
                 max_recovered_texts=max_recovered_texts,
                 metric_mode=metric_mode,
                 tokenizer_cache=tokenizer_cache,
+                reuse_json_summary=reuse_json_summary,
             )
         except Exception as exc:
             print(f"[WARN] skip ori_transfer {eval_file}: {exc}")
@@ -654,6 +722,7 @@ def recover_transfer_method(
     max_recovered_texts: int,
     metric_mode: str,
     tokenizer_cache: dict[str, Any],
+    reuse_json_summary: bool,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for eval_file in transfer_eval_files(transfer_base, method):
@@ -663,6 +732,7 @@ def recover_transfer_method(
                 max_recovered_texts=max_recovered_texts,
                 metric_mode=metric_mode,
                 tokenizer_cache=tokenizer_cache,
+                reuse_json_summary=reuse_json_summary,
             )
         except Exception as exc:
             print(f"[WARN] skip {method}_transfer {eval_file}: {exc}")
@@ -729,12 +799,22 @@ def main() -> None:
     )
     parser.add_argument(
         "--metric_mode",
-        choices=["saved_cropped", "shift_aligned"],
+        choices=["saved_cropped", "shift_aligned", "paper"],
         default="saved_cropped",
         help=(
-            "saved_cropped compares saved generated_text to the saved cropped reference. "
-            "shift_aligned compares generated_text to a reference window shifted by n_mem_tokens + 1 "
-            "when the saved token counts show the prefix-trimming bug."
+            "saved_cropped: saved cropped reference. "
+            "shift_aligned: legacy window alignment when token-count heuristics match. "
+            "paper: full-segment reference when available + smoothed sentence BLEU / ROUGE-L "
+            "as in soft_compress.evaluation.text_generation_scores."
+        ),
+    )
+    parser.add_argument(
+        "--reuse_json_summary",
+        action="store_true",
+        help=(
+            "With --metric_mode paper only: do not call cal_bleu_rouge per sample; copy summary "
+            "averages from each evaluation_results.json (after tools/recalculate_eval_bleu.py). "
+            "Use this to export recovered CSVs / tables quickly."
         ),
     )
     parser.add_argument(
@@ -743,6 +823,9 @@ def main() -> None:
         help="Also write recovered evaluation_results.recovered_bleu.json files under output_dir.",
     )
     args = parser.parse_args()
+
+    if args.reuse_json_summary and args.metric_mode != "paper":
+        parser.error("--reuse_json_summary requires --metric_mode paper")
 
     output_dir = args.output_dir
     tokenizer_cache: dict[str, Any] = {}
@@ -753,6 +836,7 @@ def main() -> None:
         args.max_recovered_texts,
         args.metric_mode,
         tokenizer_cache,
+        args.reuse_json_summary,
     )
     ori_rows = recover_ori_transfer(
         args.ori_transfer_base,
@@ -761,6 +845,7 @@ def main() -> None:
         args.max_recovered_texts,
         args.metric_mode,
         tokenizer_cache,
+        args.reuse_json_summary,
     )
     ls_rows = recover_transfer_method(
         args.ls_transfer_base,
@@ -770,6 +855,7 @@ def main() -> None:
         args.max_recovered_texts,
         args.metric_mode,
         tokenizer_cache,
+        args.reuse_json_summary,
     )
     random_rows = recover_transfer_method(
         args.random_transfer_base,
@@ -779,6 +865,7 @@ def main() -> None:
         args.max_recovered_texts,
         args.metric_mode,
         tokenizer_cache,
+        args.reuse_json_summary,
     )
 
     float_cols = {

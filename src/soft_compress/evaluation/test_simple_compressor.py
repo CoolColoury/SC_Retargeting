@@ -11,6 +11,7 @@ This script evaluates:
 
 import argparse
 import json
+import os
 import torch
 import numpy as np
 from pathlib import Path
@@ -24,16 +25,31 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent / 'simple_compressor'))
 from simple_compressor import SimpleCompressor
 
-# BLEU and ROUGE imports
+# BLEU and ROUGE (shared implementation; smoothed sentence BLEU)
 try:
-    from nltk.translate.bleu_score import sentence_bleu
-    from nltk.tokenize import word_tokenize
-    from rouge_score import rouge_scorer
+    from .text_generation_scores import cal_bleu_rouge
+
     HAS_BLEU_ROUGE = True
 except ImportError:
-    print("Warning: nltk or rouge-score not installed. BLEU/ROUGE metrics will be skipped.")
-    print("Install with: pip install nltk rouge-score")
-    HAS_BLEU_ROUGE = False
+    try:
+        from text_generation_scores import cal_bleu_rouge
+
+        HAS_BLEU_ROUGE = True
+    except ImportError:
+        print("Warning: nltk or rouge-score not installed. BLEU/ROUGE metrics will be skipped.")
+        print("Install with: pip install nltk rouge-score")
+
+        def cal_bleu_rouge(pred: str, ref: str) -> Dict:
+            return {
+                "bleu": 0.0,
+                "bleu1": 0.0,
+                "bleu2": 0.0,
+                "bleu3": 0.0,
+                "bleu4": 0.0,
+                "rougeL": 0.0,
+            }
+
+        HAS_BLEU_ROUGE = False
 
 
 def load_test_dataset(dataset_path: str, max_samples: int = None) -> List[Dict]:
@@ -230,54 +246,6 @@ def generate_reconstructed_text(
         if len(seq) > prefix_len:
             return seq[prefix_len:]
         return seq
-
-
-def cal_bleu_rouge(pred: str, ref: str) -> Dict:
-    """
-    Calculate BLEU and ROUGE scores.
-    Same implementation as evaluate_origin.py and evaluate_transfer.py
-    
-    Args:
-        pred: Predicted/generated text
-        ref: Reference/original text
-    
-    Returns:
-        Dictionary with BLEU and ROUGE scores
-    """
-    if not HAS_BLEU_ROUGE:
-        return {
-            'bleu': 0.0, 'bleu1': 0.0, 'bleu2': 0.0,
-            'bleu3': 0.0, 'bleu4': 0.0, 'rougeL': 0.0
-        }
-    
-    # Tokenize for BLEU
-    # IMPORTANT: Avoid any NLTK downloads here because the environment may be offline.
-    # We use wordpunct-like tokenization if available, otherwise simple .split().
-    try:
-        # Prefer a lightweight tokenizer that doesn't require punkt data
-        from nltk.tokenize import wordpunct_tokenize
-        pred_tokens = wordpunct_tokenize(pred)
-        ref_tokens = wordpunct_tokenize(ref)
-    except Exception:
-        # Fallback: simple whitespace tokenization
-        pred_tokens = pred.lower().split()
-        ref_tokens = ref.lower().split()
-    
-    # Calculate BLEU scores
-    bleu = sentence_bleu([ref_tokens], pred_tokens, weights=(0.25, 0.25, 0.25, 0.25))
-    bleu1 = sentence_bleu([ref_tokens], pred_tokens, weights=(1, 0, 0, 0))
-    bleu2 = sentence_bleu([ref_tokens], pred_tokens, weights=(0, 1, 0, 0))
-    bleu3 = sentence_bleu([ref_tokens], pred_tokens, weights=(0, 0, 1, 0))
-    bleu4 = sentence_bleu([ref_tokens], pred_tokens, weights=(0, 0, 0, 1))
-    
-    # Calculate ROUGE-L
-    scorer = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
-    rougeL = scorer.score(pred, ref)['rougeL'].fmeasure
-    
-    return {
-        'bleu': bleu, 'bleu1': bleu1, 'bleu2': bleu2,
-        'bleu3': bleu3, 'bleu4': bleu4, 'rougeL': rougeL
-    }
 
 
 def compute_text_similarity_metrics(
@@ -661,9 +629,19 @@ def evaluate_model(
             'results': all_results
         }
         
-        with open(output_path, 'w', encoding='utf-8') as f:
+        # Atomic write: avoids leaving a truncated JSON if the process dies mid-dump.
+        tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(output_data, f, indent=2, ensure_ascii=False)
-        
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+        os.replace(tmp_path, output_path)
+        # Same-process sanity check (detects torn writes / FS issues before returning).
+        json.loads(output_path.read_text(encoding="utf-8"))
+
         print(f"\n✓ Results saved to: {output_path}")
     
     return summary, all_results

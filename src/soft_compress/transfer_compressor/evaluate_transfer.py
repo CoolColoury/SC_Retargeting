@@ -12,25 +12,15 @@ import sys
 from tqdm import tqdm
 
 # Add paths
+_SRC_ROOT = Path(__file__).resolve().parents[2]
+if str(_SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SRC_ROOT))
+from soft_compress.evaluation.text_generation_scores import cal_bleu_rouge
+
 sys.path.append(str(Path(__file__).parent.parent / 'simple_mem'))
 
 from mem_cell import MemoryCell
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from nltk.tokenize import wordpunct_tokenize
-from nltk.translate.bleu_score import sentence_bleu
-from rouge_score import rouge_scorer
-
-def safe_tokenize(text: str):
-    """
-    Offline-safe tokenization.
-    We avoid NLTK's word_tokenize (requires 'punkt' download).
-    wordpunct_tokenize does not require any extra NLTK data.
-    """
-    try:
-        return wordpunct_tokenize(text)
-    except Exception:
-        return text.split()
-
 
 def load_results(results_path: str) -> tuple:
     """Load transferred compression results"""
@@ -56,9 +46,27 @@ def load_results(results_path: str) -> tuple:
     
     metadata = data.get('metadata', {})
     results = data.get('results', [])
-    
+
     if not results:
         raise ValueError(f"No results found in {results_path}")
+
+    npz_name = metadata.get('memories_npz')
+    if npz_name and results and 'memory' not in results[0]:
+        npz_path = results_file.parent / npz_name
+        if not npz_path.exists():
+            npz_path = results_file.with_suffix('.memories.npz')
+        if not npz_path.exists():
+            raise FileNotFoundError(
+                f"Memory sidecar not found for {results_path}: expected {npz_name}"
+            )
+        loaded = np.load(npz_path, allow_pickle=True)
+        memories = loaded['memories']
+        if len(memories) != len(results):
+            raise ValueError(
+                f"Memory sidecar length mismatch: {len(memories)} vs {len(results)} results"
+            )
+        for idx, row in enumerate(results):
+            row['memory'] = memories[idx]
     
     # For transferred results, model name is in target_model
     model_name = metadata.get('target_model')
@@ -162,26 +170,6 @@ def lookup_text_from_index(text_id: str, dataset: list, id_to_text: dict) -> str
             return str(item)
 
     raise ValueError(f"Text with id '{text_id}' not found in preloaded dataset")
-
-
-def cal_bleu_rouge(pred: str, ref: str) -> dict:
-    """Calculate BLEU and ROUGE scores"""
-    pred_tokens = safe_tokenize(pred)
-    ref_tokens = safe_tokenize(ref)
-    
-    bleu = sentence_bleu([ref_tokens], pred_tokens, weights=(0.25, 0.25, 0.25, 0.25))
-    bleu1 = sentence_bleu([ref_tokens], pred_tokens, weights=(1, 0, 0, 0))
-    bleu2 = sentence_bleu([ref_tokens], pred_tokens, weights=(0, 1, 0, 0))
-    bleu3 = sentence_bleu([ref_tokens], pred_tokens, weights=(0, 0, 1, 0))
-    bleu4 = sentence_bleu([ref_tokens], pred_tokens, weights=(0, 0, 0, 1))
-    
-    scorer = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
-    rougeL = scorer.score(pred, ref)['rougeL'].fmeasure
-    
-    return {
-        'bleu': bleu, 'bleu1': bleu1, 'bleu2': bleu2,
-        'bleu3': bleu3, 'bleu4': bleu4, 'rougeL': rougeL
-    }
 
 
 def evaluate_reconstruction(

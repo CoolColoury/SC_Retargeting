@@ -21,7 +21,7 @@
 #   bash run_ori_transfer_configurable.sh [num_samples] [epochs] [batch_size] [lr]
 #
 #   # Method 2: Pass as arguments (in order: train_mode, src_compressor_path, src_decoder_path, tgt_model_path, embed_len, segment_length)
-#   bash run_ori_transfer_configurable.sh 1000000 1 16 0.0001 converter_only "outputs/..." "/home/..." "/home/..." 32 128
+#   bash run_ori_transfer_configurable.sh 1000000 1 16 0.0001 converter_only "outputs/..." "${MODELS_DIR}/gpt2" "${MODELS_DIR}/Llama-3-8B-Instruct" 32 128
 
 set -e
 
@@ -85,8 +85,8 @@ if [[ "${TRAIN_MODE}" != "converter_only" && "${TRAIN_MODE}" != "encoder_convert
 fi
 
 # Data paths
-TRAIN_DATA_DIR="${TRAIN_DATA_DIR:-${PROJECT_ROOT}/datasets/simple_mem_1M/fineweb_train.json}"
-VALID_DATA_DIR="${VALID_DATA_DIR:-${PROJECT_ROOT}/${DATA_ROOT}/fineweb_test.json}"
+TRAIN_DATA_DIR="${TRAIN_DATA_DIR:-${DATA_ROOT}/fineweb_train.json}"
+VALID_DATA_DIR="${VALID_DATA_DIR:-${DATA_ROOT}/fineweb_test.json}"
 
 # Eval samples (fixed small subset by default)
 VALID_DATA_SAMPLES="${VALID_DATA_SAMPLES:-1000}"

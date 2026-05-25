@@ -7,6 +7,7 @@ import csv
 from pathlib import Path
 
 _METRIC_DIR = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RESULTS_DIR = _METRIC_DIR / "results"
 
 

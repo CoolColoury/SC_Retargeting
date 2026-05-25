@@ -1,4 +1,0 @@
-feature,coef_on_z,train_mean_after_sign,train_std_after_sign,signed_orientation
-target_hidden_size,0.14031056293850475,2925.714285714286,975.8474286903837,raw_higher_is_better
-source_native_nll,0.029115129090958602,-0.13890224013473998,0.15020002370162777,higher_is_better
-prior_same_model_family,0.027805512228997496,0.2857142857142857,0.4517539514526253,raw_higher_is_better

@@ -106,7 +106,7 @@ if [ ! -f "${CHECKPOINT_DIR}/model.safetensors" ] && [ ! -f "${CHECKPOINT_DIR}/p
 fi
 
 # Data paths (aligned with eval_ori_transfer.sh)
-TEST_DATA_PATH="${TEST_DATA_PATH:-${DATA_ROOT}/fineweb_test.json}"
+TEST_DATA_PATH="${TEST_DATA_PATH:-${PROJECT_ROOT}/${DATA_ROOT}/fineweb_test.json}"
 
 # Output directory (save evaluation results in the checkpoint directory)
 OUTPUT_DIR="${CHECKPOINT_DIR}/evaluation"
@@ -156,7 +156,7 @@ EVAL_ARGS=(
     --device "${DEVICE}"
 )
 
-if [ "${GENERATE_TEXT}" = "0" ] || [ "${GENERA cTE _TEXT}" = "false" ] || [ "${GENERATE_TEXT}" = "no" ]; then
+if [ "${GENERATE_TEXT}" = "0" ] || [ "${GENERATE_TEXT}" = "false" ] || [ "${GENERATE_TEXT}" = "no" ]; then
     EVAL_ARGS+=(--no_generate)
 fi
 

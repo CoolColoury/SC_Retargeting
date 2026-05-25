@@ -23,7 +23,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 ROOT = Path(__file__).resolve().parents[1]  # code_backup root
-_METRIC_TEST_DIR = Path(__file__).resolve().parent  # rq3/
+_METRIC_DIR = Path(__file__).resolve().parent
 sys.path.append(str(_METRIC_TEST_DIR))
 sys.path.append(str(ROOT / "src" / "soft_compress" / "simple_compressor"))
 from discrete_priors import discrete_prior_features  # noqa: E402
